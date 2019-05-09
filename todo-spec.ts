@@ -1,6 +1,6 @@
-'use strict';
-
 import { browser, element, by, By, $, $$, ExpectedConditions, ElementFinder } from 'protractor';
+
+import { writeFile, writeFileSync } from 'fs';
 
 class TopHelper {
     public static getTableRow(index: number): ElementFinder {
@@ -11,6 +11,16 @@ class TopHelper {
         browser.get('https://socialblade.com/youtube/top/5000');
         return browser.sleep(10000);
     }
+}
+
+interface ParsedResult {
+    name: string;
+    country: string;
+    id: string | number;
+    links: string[];
+    language: 'RU' | 'EN';
+    email?: string;
+    capcha?: boolean;
 }
 
 class Helper {
@@ -29,9 +39,18 @@ class Helper {
             el.getWebElement()
         );
     }
+
+    public static writeFile(data: ParsedResult[]) {
+        writeFileSync('parsed.json', JSON.stringify(data));
+    }
 }
 
+const data: ParsedResult[] = [];
+let links: string[] = [];
+let capcha;
+
 describe('top 5000', () => {
+    browser.waitForAngularEnabled(false);
     let originDefaultTimeoutInterval = 0;
     beforeAll(() => {
         originDefaultTimeoutInterval = jasmine.DEFAULT_TIMEOUT_INTERVAL
@@ -39,6 +58,7 @@ describe('top 5000', () => {
     })
     afterAll(() => {
         jasmine.DEFAULT_TIMEOUT_INTERVAL = originDefaultTimeoutInterval;
+        Helper.writeFile(data);
     })
     it('open top 5000', async () => {
         browser.ignoreSynchronization = true;
@@ -46,7 +66,8 @@ describe('top 5000', () => {
     });
 
     // generate tests
-    for (let rowIndex = 0; rowIndex < 5000; rowIndex++) {
+    for (let rowIndex = 0; rowIndex < 3; rowIndex++) {
+        links = [];
         it(`open blogger page index: ${rowIndex}`, async () => {
             try {
                 await Helper.randomWait();
@@ -61,6 +82,7 @@ describe('top 5000', () => {
                 const channelName = await channelRow.getText();
                 await channelRow
                     .click();
+
                 await Helper.defaultWait();
 
                 const countryName = await $$('.YouTubeUserTopInfo')
@@ -69,39 +91,52 @@ describe('top 5000', () => {
                     .get(0)
                     .getText();
 
-                console.log(`origin country: ${countryName}, language: ${countryName === 'RU' ? 'RU' : 'EN'}`)
+                const language = countryName === 'RU' ? 'RU' : 'EN';
+                console.log(`origin country: ${countryName}, language: ${language}`)
 
                 const socialLinksEl = $$('#YouTubeUserTopSocial a');
                 console.log(`channel: ${channelName} index: ${rowIndex}`)
+                let youtubeEmail = '';
                 await socialLinksEl.each(async (socialLinkEl) => {
-                    const link = await socialLinkEl.getAttribute("href")
-                    if (link.includes('facebook')) {
-                        await socialLinkEl.click();
-                        await Helper.randomWait();
+                    links = [];
+                    let link = await socialLinkEl.getAttribute("href");
+                    capcha = true;
 
-                        // открыть в фейсбуке список контактов
-                        await element.all(by.css('a._5u7u'))
-                            .get(0)
-                            .click();
+                    if (link.includes('youtube.com')) {
+                        link += '/about'
+                        Helper.randomWait();
 
-                        await Helper.randomWait();
-
-                        let mail = '';
+                        await browser.get(link);
 
                         try {
-                            // получить емейл
-                            mail = await $('#u_0_m').getText();
-                        } catch (err) { }
-
-                        console.log(`mail: ${mail}`);
-
-                        await browser.close();
-                        await Helper.randomWait();
+                            await Helper.randomWait();
+                            const emailEl = $$('table .ytd-channel-about-metadata-renderer td').get(1);
+                            Helper.scrollIntoview(emailEl);
+                            youtubeEmail = (await emailEl.getAttribute('innerText')).trim().split('\n').join().toUpperCase();
+                            console.log(`youtube hidden email is: ${youtubeEmail}`);
+                            if (youtubeEmail.includes('ПОКАЗАТЬ АДРЕС ЭЛЕКТРОННОЙ ПОЧТЫ') || youtubeEmail.includes('VIEW EMAIL ADDRESS')) {
+                                capcha = true;
+                                youtubeEmail = null;
+                            } else {
+                                capcha = false;
+                            }
+                        }
+                        catch {
+                            console.log(`no email provided for this channel`);
+                            capcha = false;
+                            youtubeEmail = null;
+                        } finally {
+                            await browser.navigate().back();
+                        }
                     }
+
+                    links.push(link);
                     console.log(`link: ${link}`);
                 })
+                data.push({ id: rowIndex, name: channelName, country: countryName, language, links, email: youtubeEmail, capcha });
 
                 await browser.navigate().back();
+
             } catch (err) {
                 console.warn(`cannot pass row: ${rowIndex}`);
                 console.log('-----------------');
@@ -111,21 +146,4 @@ describe('top 5000', () => {
             }
         })
     }
-
-
-    // it('should list todos', function () {
-    //     expect(todoList.count()).toEqual(2);
-    //     expect(todoList.get(1).getText()).toEqual('build an angular app');
-    // });
-
-    // it('should add a todo', function () {
-    //     var addTodo = element(by.model('todoList.todoText'));
-    //     var addButton = element(by.css('[value="add"]'));
-
-    //     addTodo.sendKeys('write a protractor test');
-    //     addButton.click();
-
-    //     expect(todoList.count()).toEqual(3);
-    //     expect(todoList.get(2).getText()).toEqual('write a protractor test');
-    // });
 });
